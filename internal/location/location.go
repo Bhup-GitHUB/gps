@@ -1,6 +1,9 @@
 package location
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type Event struct {
 	OrderID   string   `json:"order_id"`
@@ -18,4 +21,8 @@ func (e *Event) Normalize() {
 
 func (e Event) Valid() bool {
 	return e.OrderID != "" && e.RiderID != "" && e.Lat != nil && e.Lng != nil
+}
+
+func RedisKey(orderID string) string {
+	return fmt.Sprintf("rider:%s:loc", orderID)
 }
