@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type LocationData struct {
 }
 
 var riderData = map[string]LocationData{}
+var riderLock sync.Mutex
 
 func LocationHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -36,7 +38,9 @@ func LocationHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		riderLock.Lock()
 		data, ok := riderData[orderID]
+		riderLock.Unlock()
 		if !ok {
 			fmt.Println("rider miss", orderID)
 			w.Header().Set("Content-Type", "application/json")
@@ -80,7 +84,9 @@ func LocationHandler(w http.ResponseWriter, r *http.Request) {
 			Timestamp: body.Timestamp,
 		}
 
+		riderLock.Lock()
 		riderData[body.OrderID] = data
+		riderLock.Unlock()
 
 		fmt.Println("rider data", body.OrderID, body.RiderID)
 
