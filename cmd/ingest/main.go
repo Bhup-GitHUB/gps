@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"gps/internal/config"
 	"gps/internal/location"
 
 	"github.com/segmentio/kafka-go"
@@ -18,20 +21,9 @@ type App struct {
 }
 
 func main() {
-	port := os.Getenv("INGEST_PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	broker := os.Getenv("KAFKA_BROKERS")
-	if broker == "" {
-		broker = "localhost:9092"
-	}
-
-	topic := os.Getenv("KAFKA_TOPIC")
-	if topic == "" {
-		topic = "rider_locations"
-	}
+	port := config.String("INGEST_PORT", "8080")
+	broker := config.String("KAFKA_BROKERS", "localhost:9092")
+	topic := config.String("KAFKA_TOPIC", "rider_locations")
 
 	writer := &kafka.Writer{
 		Addr:     kafka.TCP(broker),
@@ -47,8 +39,29 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/location", app.handleLocation)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Println("shutting ingest")
+		writer.Close()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(shutdownCtx)
+	}()
+
 	log.Println("ingest api on", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	err := server.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
 
 func (a App) handleLocation(w http.ResponseWriter, r *http.Request) {

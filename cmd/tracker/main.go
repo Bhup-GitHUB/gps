@@ -6,9 +6,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
+	"gps/internal/config"
 	"gps/internal/location"
 
 	"github.com/redis/go-redis/v9"
@@ -21,33 +24,11 @@ type App struct {
 }
 
 func main() {
-	broker := os.Getenv("KAFKA_BROKERS")
-	if broker == "" {
-		broker = "localhost:9092"
-	}
-
-	topic := os.Getenv("KAFKA_TOPIC")
-	if topic == "" {
-		topic = "rider_locations"
-	}
-
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
-	}
-
-	redisDB := 0
-	if os.Getenv("REDIS_DB") != "" {
-		value, err := strconv.Atoi(os.Getenv("REDIS_DB"))
-		if err == nil {
-			redisDB = value
-		}
-	}
-
-	port := os.Getenv("TRACKER_PORT")
-	if port == "" {
-		port = "8081"
-	}
+	broker := config.String("KAFKA_BROKERS", "localhost:9092")
+	topic := config.String("KAFKA_TOPIC", "rider_locations")
+	redisAddr := config.String("REDIS_ADDR", "localhost:6379")
+	redisDB := config.Int("REDIS_DB", 0)
+	port := config.String("TRACKER_PORT", "8081")
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{broker},
@@ -70,17 +51,52 @@ func main() {
 	mux.HandleFunc("/health", app.handleHealth)
 	mux.HandleFunc("/location", app.handleLocation)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	log.Println("consumer started", topic)
-	go app.runConsumer(context.Background())
+	go func() {
+		defer wg.Done()
+		app.runConsumer(ctx)
+	}()
+
+	go func() {
+		<-ctx.Done()
+		log.Println("shutting tracker")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		server.Shutdown(shutdownCtx)
+		app.reader.Close()
+		app.redis.Close()
+	}()
 
 	log.Println("tracker api on", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	err := server.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+
+	wg.Wait()
 }
 
 func (a App) runConsumer(ctx context.Context) {
 	for {
 		msg, err := a.reader.ReadMessage(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
 			log.Println("read failed", err)
 			time.Sleep(time.Second)
 			continue
