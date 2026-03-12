@@ -27,6 +27,29 @@ var riderData = map[string]LocationData{}
 
 func LocationHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodGet:
+		orderID := r.URL.Query().Get("order_id")
+		if orderID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "order_id is required"})
+			return
+		}
+
+		data, ok := riderData[orderID]
+		if !ok {
+			fmt.Println("rider miss", orderID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "location not found"})
+			return
+		}
+
+		fmt.Println("rider hit", orderID)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(data)
 	case http.MethodPost:
 		var body LocationBody
 
