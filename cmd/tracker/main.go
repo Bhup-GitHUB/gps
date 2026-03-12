@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -43,6 +44,11 @@ func main() {
 		}
 	}
 
+	port := os.Getenv("TRACKER_PORT")
+	if port == "" {
+		port = "8081"
+	}
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{broker},
 		Topic:   topic,
@@ -60,8 +66,15 @@ func main() {
 		redis:  rdb,
 	}
 
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", app.handleHealth)
+	mux.HandleFunc("/location", app.handleLocation)
+
 	log.Println("consumer started", topic)
-	app.runConsumer(context.Background())
+	go app.runConsumer(context.Background())
+
+	log.Println("tracker api on", port)
+	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
 
 func (a App) runConsumer(ctx context.Context) {
@@ -98,4 +111,47 @@ func (a App) storeLocation(ctx context.Context, body []byte) error {
 	}
 
 	return a.redis.Set(ctx, location.RedisKey(event.OrderID), body, 30*time.Second).Err()
+}
+
+func (a App) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (a App) handleLocation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	orderID := r.URL.Query().Get("order_id")
+	if orderID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_id is required"})
+		return
+	}
+
+	body, err := a.redis.Get(r.Context(), location.RedisKey(orderID)).Bytes()
+	if err == redis.Nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "location not found"})
+		return
+	}
+
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(body)
+}
+
+func writeJSON(w http.ResponseWriter, code int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(body)
 }
