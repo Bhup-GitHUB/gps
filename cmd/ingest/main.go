@@ -17,6 +17,7 @@ import (
 
 type App struct {
 	writer *kafka.Writer
+	send   func(context.Context, kafka.Message) error
 	topic  string
 }
 
@@ -33,6 +34,9 @@ func main() {
 
 	app := App{
 		writer: writer,
+		send: func(ctx context.Context, msg kafka.Message) error {
+			return writer.WriteMessages(ctx, msg)
+		},
 		topic:  topic,
 	}
 
@@ -89,13 +93,13 @@ func (a App) handleLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := json.Marshal(event)
+	body, err := location.Encode(event)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to encode"})
 		return
 	}
 
-	err = a.writer.WriteMessages(context.Background(), kafka.Message{
+	err = a.send(context.Background(), kafka.Message{
 		Key:   []byte(event.OrderID),
 		Value: body,
 	})

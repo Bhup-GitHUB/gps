@@ -1,6 +1,7 @@
 package location
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -25,4 +26,14 @@ func (e Event) Valid() bool {
 
 func RedisKey(orderID string) string {
 	return fmt.Sprintf("rider:%s:loc", orderID)
+}
+
+func Encode(event Event) ([]byte, error) {
+	return json.Marshal(event)
+}
+
+func Decode(body []byte) (Event, error) {
+	var event Event
+	err := json.Unmarshal(body, &event)
+	return event, err
 }
