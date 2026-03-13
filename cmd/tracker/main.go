@@ -19,8 +19,10 @@ import (
 )
 
 type App struct {
-	reader *kafka.Reader
-	redis  *redis.Client
+	reader      *kafka.Reader
+	redis       *redis.Client
+	setLocation func(context.Context, string, []byte, time.Duration) error
+	getLocation func(context.Context, string) ([]byte, error)
 }
 
 func main() {
@@ -45,6 +47,12 @@ func main() {
 	app := App{
 		reader: reader,
 		redis:  rdb,
+		setLocation: func(ctx context.Context, key string, body []byte, ttl time.Duration) error {
+			return rdb.Set(ctx, key, body, ttl).Err()
+		},
+		getLocation: func(ctx context.Context, key string) ([]byte, error) {
+			return rdb.Get(ctx, key).Bytes()
+		},
 	}
 
 	mux := http.NewServeMux()
@@ -115,9 +123,7 @@ func (a App) runConsumer(ctx context.Context) {
 }
 
 func (a App) storeLocation(ctx context.Context, body []byte) error {
-	var event location.Event
-
-	err := json.Unmarshal(body, &event)
+	event, err := location.Decode(body)
 	if err != nil {
 		return err
 	}
@@ -126,7 +132,7 @@ func (a App) storeLocation(ctx context.Context, body []byte) error {
 		return nil
 	}
 
-	return a.redis.Set(ctx, location.RedisKey(event.OrderID), body, 30*time.Second).Err()
+	return a.setLocation(ctx, location.RedisKey(event.OrderID), body, 30*time.Second)
 }
 
 func (a App) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +156,7 @@ func (a App) handleLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := a.redis.Get(r.Context(), location.RedisKey(orderID)).Bytes()
+	body, err := a.getLocation(r.Context(), location.RedisKey(orderID))
 	if err == redis.Nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "location not found"})
 		return
