@@ -1,15 +1,33 @@
 ## GPS ZOMATO SWIGGGGGGGYYYY
 
-run local
+defaults are in `.env.example`
 
 ```bash
-vercel dev
+cat .env.example
+```
+
+start kafka and redis
+
+```bash
+docker-compose up -d
+```
+
+run tracker
+
+```bash
+go run ./cmd/tracker
+```
+
+run ingest
+
+```bash
+go run ./cmd/ingest
 ```
 
 post location
 
 ```bash
-curl -X POST http://localhost:3000/api/location \
+curl -X POST http://localhost:8080/location \
   -H "Content-Type: application/json" \
   -d '{
     "order_id":"order_1",
@@ -23,5 +41,11 @@ curl -X POST http://localhost:3000/api/location \
 get location
 
 ```bash
-curl "http://localhost:3000/api/location?order_id=order_1"
+curl "http://localhost:8081/location?order_id=order_1"
+```
+
+health
+
+```bash
+curl "http://localhost:8081/health"
 ```
